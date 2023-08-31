@@ -36,14 +36,19 @@ async def data_json1(mask: JSONStructure = None):
     normalized_points, normalized_roi, normalized_rgb_image = normalize_pixel_array(first_slice, points, roi)
     masks_points, masks_roi = mask_array_all(normalized_points, normalized_roi, normalized_rgb_image)
 
-    print(normalized_points, normalized_roi, type(normalized_rgb_image))
-
+    #print(normalized_points, normalized_roi, type(normalized_rgb_image))
 
     data_mask = {
         "mask_points": masks_points.tolist(),
         "mask_roi": masks_roi.tolist()
     }
-    print(masks_roi)
+
+    json_file_path = r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\masks.json"
+
+    # Открываем файл в режиме записи и сохраняем словарь как JSON
+    with open(json_file_path, "w") as json_file:
+        json.dump(data_mask, json_file)
+    #print(masks_roi)
 
     return data_mask
 
@@ -87,7 +92,7 @@ def mask_array_all(points, roi, rgb_image):  # расчитано на то чт
         point_labels=None,
         boxes=transformed_boxes,
         multimask_output=False)
-    #print(masks_roi)
+        #print(masks_roi)
 
     input_label = np.array([1] * len(points))
     input_point = np.array(points)
@@ -97,8 +102,9 @@ def mask_array_all(points, roi, rgb_image):  # расчитано на то чт
         point_labels=input_label,
         box=None,
         multimask_output=False)  # если тут true, то выдает 3 маски
-    #print(masks_points)
+        #print(masks_points)
     return masks_roi, masks_points
+
 
 
 '''
