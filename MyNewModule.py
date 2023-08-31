@@ -3,7 +3,7 @@ import slicer
 import ctk
 import vtk
 from slicer.ScriptedLoadableModule import *
-from slicer.util import VTKObservationMixin
+from slicer.util import getNode
 from sklearn.preprocessing import MinMaxScaler
 import torch
 from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
@@ -11,6 +11,7 @@ import numpy as np
 import json
 import requests
 from vtk.util import numpy_support
+
 
 class MyNewModule:
     def __init__(self, parent):  # функция с названиями, инициалами и тд
@@ -83,20 +84,6 @@ class MyNewModuleWidget:
         self.textfield = qt.QTextEdit()  # текстовое поле только для чтения
         self.textfield.setReadOnly(True)
         self.formFrame.layout().addWidget(self.textfield)
-
-    def informationButtonClicked(self):
-        # Получение пути выбранного узла
-        currentNode = self.inputSelector.currentNode()
-        if currentNode:
-            storageNode = currentNode.GetStorageNode()
-            if storageNode:
-                path = storageNode.GetFileName()
-                self.textfield.insertPlainText(path)
-            else:
-                self.textfield.insertPlainText("No storage node associated with the selected node")
-        else:
-            self.textfield.insertPlainText("No node selected")
-
 
 
     def get_many_coords(self): #пустой если обернуть в list()
@@ -188,6 +175,13 @@ class MyNewModuleWidget:
         }
 
 
+        data1 = {
+            'pixel_arr': pixel_arr_serializable
+        }
+        with open(outputFileName, "w") as json_file:
+            json.dump(data1, json_file)
+
+
         #print(len(data["pixel_arr"]))
         #print(type(points_serializable), type(roi), type(pixel_arr_serializable))
         headers = {'Content-Type': 'application/json'}
@@ -198,7 +192,7 @@ class MyNewModuleWidget:
             data_mask = response.content.decode()
         else:
             print(f"Failed to send file. Response status code: {response.status_code}")
-            data_mask = {}
+            data_mask = []
 
 
         #print(data_mask)
@@ -209,13 +203,45 @@ class MyNewModuleWidget:
         mask = json.loads(mask_data)
         mask_points = np.array(mask.get("mask_points", []))
         mask_roi = np.array(mask.get("mask_roi", []))
+        #json_file_path = r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\mask.json"
+        combined_mask = np.array([mask_points[0], mask_points[1], mask_roi])
+        mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+        arr_volume = slicer.util.arrayFromVolume(mainvolume)  #15, 320, 320
+        labelmap_data = combined_mask.astype(int)
+        for i in labelmap_data:
+            mask = i[0, :, :]   #320, 320
+            mask3d = mask.reshape(arr_volume[0, :, :].shape)
 
-        #пометка: мб стоит отказаться от этого решения в сторону отображения по цветам церез цикл
-        combined_mask = np.logical_or(mask_points, mask_roi)
+        point_Ras = [0, 0, 0, 1]
+        transformRasToVolumeRas = vtk.vtkGeneralTransform()
+        slicer.vtkMRMLTransformNode.GetTransformBetweenNodes(None, mainvolume.GetParentTransformNode(), transformRasToVolumeRas)
+        point_VolumeRas = transformRasToVolumeRas.TransformPoint(point_Ras[0:3])
 
-        #print(combined_mask)  # после этого идут преобразования
+        volumeRasToIjk = vtk.vtkMatrix4x4()
+        mainvolume.GetRASToIJKMatrix(volumeRasToIjk)
+        point_Ijk = [0, 0, 0, 1]
+        volumeRasToIjk.MultiplyPoint(np.append(point_VolumeRas, 1.0), point_Ijk)
+        point_Ijk = [c for c in point_Ijk[0:3]]
+
+        T = np.array(
+            [[-1, 0, 0, point_Ijk[0]],
+             [0, -1, 0, point_Ijk[1]],
+             [0, 0, 1, -point_Ijk[2]],
+             [0, 0, 0, 1]])
+
+        volumeNode = slicer.util.addVolumeFromArray(mask3d * 120, T, nodeClassName="vtkMRMLLabelMapVolumeNode")
 
 
+
+        seg = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", 'Segmentation_prostate')
+        slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(volumeNode, seg)
+        seg.CreateClosedSurfaceRepresentation()
+        slicer.mrmlScene.RemoveNode(volumeNode)
+        segmentationNode = getNode('Segmentation_prostate')
+        segmentation = segmentationNode.GetSegmentation()
+        segment = segmentation.GetSegment(segmentation.GetNthSegmentID(0))
+        segment.SetColor(230 / 255.0, 158 / 255.0, 140 / 255.0)
+        segment.SetName('prostate')
 
 
 
