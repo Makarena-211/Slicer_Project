@@ -32,30 +32,30 @@ async def data_json1(mask: JSONStructure = None):
     points = mask[b"points"]
     roi = mask[b"roi"]
     pixel_arr = np.array(mask[b"pixel_arr"])
+    print(f"Данные из json {points}, {roi}, {len(pixel_arr)}, {pixel_arr.shape}")
     first_slice = pixel_arr[0, :, :]
-    normalized_points, normalized_roi, normalized_rgb_image = normalize_pixel_array(first_slice, points, roi)
-    masks_points, masks_roi = mask_array_all(normalized_points, normalized_roi, normalized_rgb_image)
+    normalized_rgb_image = normalize_pixel_array(first_slice)
+    masks_points, masks_roi = mask_array_all(points, roi, normalized_rgb_image)
 
-    #print(normalized_points, normalized_roi, type(normalized_rgb_image))
+    print(type(masks_points), masks_points)
 
     data_mask = {
         "mask_points": masks_points.tolist(),
-        "mask_roi": masks_roi.tolist()
+        "mask_roi": masks_roi
     }
 
     json_file_path = r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\masks.json"
 
-    # Открываем файл в режиме записи и сохраняем словарь как JSON
+    #Открываем файл в режиме записи и сохраняем словарь как JSON
     with open(json_file_path, "w") as json_file:
         json.dump(data_mask, json_file)
-    #print(masks_roi)
+    print(masks_roi)
 
     return data_mask
 
-def normalize_pixel_array(pixel_array, points, roi):
+def normalize_pixel_array(pixel_array):
     #pixel_array, points, roi = ...
-    roi = [[round(value, 2) for value in sublist] for sublist in roi]
-    points = [[round(elem) for i, elem in enumerate(sublist) if (i + 1) % 3 != 0] for sublist in points]
+
     scaler = MinMaxScaler()
     # Меняем размерность массива пикселей для работы с MinMaxScaler
     reshaped_pixel_array = pixel_array.reshape(-1, 1)
@@ -74,7 +74,7 @@ def normalize_pixel_array(pixel_array, points, roi):
     # Масштабируйте значения обратно к диапазону [0, 255]
     rgb_image = (rgb_image * 255).astype(np.uint8)
     #print(points, roi, rgb_image)
-    return points, roi, rgb_image
+    return rgb_image
 
 def mask_array_all(points, roi, rgb_image):  # расчитано на то что есть и roi и points
     DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -84,27 +84,36 @@ def mask_array_all(points, roi, rgb_image):  # расчитано на то чт
     predictor = SamPredictor(sam)
     predictor.set_image(rgb_image)
 
-    input_roi = np.array(roi)
-    input_boxes = torch.tensor(input_roi, device=predictor.device)  # закидываем np.array в тензор, device=predictor.device)
-    transformed_boxes = predictor.transform.apply_boxes_torch(input_boxes, rgb_image.shape[:2])  #
-    masks_roi, _, _ = predictor.predict_torch(
-        point_coords=None,
-        point_labels=None,
-        boxes=transformed_boxes,
-        multimask_output=False)
-        #print(masks_roi)
+    #points = [[elem for i, elem in enumerate(sublist) if (i + 1) % 3 != 0] for sublist in points]
+    #points = [int(round(x, -1)) for x in points]
+    print(f"points {points}")
 
-    input_label = np.array([1] * len(points))
-    input_point = np.array(points)
+    #roi = [[round(value, 2) for value in sublist] for sublist in roi]
+    if roi:
+        input_roi = np.array(roi)
+        input_boxes = torch.tensor(input_roi, device=predictor.device)  # закидываем np.array в тензор, device=predictor.device)
+        transformed_boxes = predictor.transform.apply_boxes_torch(input_boxes, rgb_image.shape[:2])  #
+        masks_roi, _, _ = predictor.predict_torch(
+            point_coords=None,
+            point_labels=None,
+            multimask_output=False)
+        print(masks_roi)
+    else:
+        masks_roi = []
 
-    masks_points, scores, logits = predictor.predict(
-        point_coords=input_point,
-        point_labels=input_label,
-        box=None,
-        multimask_output=False)  # если тут true, то выдает 3 маски
-        #print(masks_points)
-    return masks_roi, masks_points
-
+    if points:
+        #input_label = np.array([1] * len(points))
+        input_label = np.array([1])
+        input_point = np.array([points])
+        #input_point = np.array([[167, 145]])
+        print(f"input point {input_point}, {type(input_point)}, {input_point.shape}")
+        masks_points, scores, logits = predictor.predict(
+            point_coords=input_point,
+            point_labels=input_label,
+            box=None,
+            multimask_output=True)  # если тут true, то выдает 3 маски
+        print(masks_points)
+    return masks_points, masks_roi
 
 
 '''
