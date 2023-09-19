@@ -23,6 +23,28 @@ class MyNewModule:
         parent.acknowledgementText = "This file was originally developed by Makarena"
         self.parent = parent
 
+class SammBaseLogic(ScriptedLoadableModuleLogic):
+    """This class should implement all the actual
+    computation done by your module.  The interface
+    should be such that other python code can import
+    this class and make use of the functionality without
+    requiring an instance of the Widget.
+    Uses ScriptedLoadableModuleLogic base class, available at:
+    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
+    """
+
+    def __init__(self):
+        """
+        Called when the logic class is instantiated. Can be used for initializing member variables.
+        """
+        ScriptedLoadableModuleLogic.__init__(self)
+        self._parameterNode = self.getParameterNode()
+        self._connections = None
+        self._flag_prompt_sync = False
+        self._flag_promptpts_sync = False
+        self._frozenSlice = {"R": [], "G": [], "Y": []}
+        #self._latlogger = LatencyLogger()
+
 class MyNewModuleWidget:
     def __init__(self, parent=None):
         if not parent:
@@ -81,7 +103,13 @@ class MyNewModuleWidget:
         button6.connect("clicked(bool)", self.creating_mask)
         self.formFrame.layout().addWidget(button6)
 
+        button7 = qt.QPushButton("RAS")
+        button7.connect("clicked(bool)", self.ras_to_ijk)
+        self.formFrame.layout().addWidget(button7)
+
+
         self.textfield = qt.QTextEdit()  # текстовое поле только для чтения
+        self.textfield.setReadOnly(True)
         self.textfield.setReadOnly(True)
         self.formFrame.layout().addWidget(self.textfield)
 
@@ -130,6 +158,29 @@ class MyNewModuleWidget:
         pixel_array = slicer.util.arrayFromVolume(mainvolume) #получили pixel_array изображения
         return pixel_array
 
+    def ras_to_ijk(self):
+        mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+        ras = self.get_many_coords()
+        ras_serializable = [list(coord) for coord in ras]
+        ras_serializable = [item for sublist in ras_serializable for item in sublist]
+        print(f"От функции: {type(ras)}")
+        print(f"Сериализация {ras_serializable}")
+        rasToIjkMatrix = vtk.vtkMatrix4x4()
+        mainvolume.GetRASToIJKMatrix(rasToIjkMatrix)
+        ras_serializable.append(1)
+
+        ijk = [0, 0, 0, 0]
+        for i in range(4):
+            for j in range(4):
+                ijk[i] += rasToIjkMatrix.GetElement(i, j) * ras_serializable[j]
+
+        ijk.pop()
+        ijk.pop()
+        # округляем значения до целых чисел
+        #ijk = [int(round(x)) for x in ijk]
+        print(f"Результат {ijk}, {type(ijk)}")
+        return ijk
+
     def scan(self):
         fiducial_nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLMarkupsFiducialNode") #точки
         mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode") #фотка
@@ -152,10 +203,28 @@ class MyNewModuleWidget:
         url = 'http://127.0.0.1:8000/masks'
 
         try:
-            points = self.get_many_coords()
-            points_serializable = [list(coord) for coord in points]  # Преобразовываем vtkVector3d в список
+            mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+            ras = self.get_many_coords()
+            ras_serializable = [list(coord) for coord in ras]
+            ras_serializable = [item for sublist in ras_serializable for item in sublist]
+            print(f"От функции: {type(ras)}")
+            print(f"Сериализация {ras_serializable}")
+            rasToIjkMatrix = vtk.vtkMatrix4x4()
+            mainvolume.GetRASToIJKMatrix(rasToIjkMatrix)
+            ras_serializable.append(1)
+
+            ijk = [0, 0, 0, 0]
+            for i in range(4):
+                for j in range(4):
+                    ijk[i] += rasToIjkMatrix.GetElement(i, j) * ras_serializable[j]
+
+            ijk.pop()
+            ijk.pop()
+            # округляем значения до целых чисел
+            # ijk = [int(round(x)) for x in ijk]
+            print(f"Результат {ijk}, {type(ijk)}")
         except Exception as e:
-            points_serializable = []
+            ijk = []
 
         try:
             roi = self.get_roi()
@@ -169,17 +238,13 @@ class MyNewModuleWidget:
             pixel_arr_serializable = []
 
         data = {
-            "points": points_serializable,  # Используем преобразованные данные
+            "points": ijk,  # Используем преобразованные данные
             "roi": roi,
             'pixel_arr': pixel_arr_serializable
         }
 
-
-        data1 = {
-            'pixel_arr': pixel_arr_serializable
-        }
-        with open(outputFileName, "w") as json_file:
-            json.dump(data1, json_file)
+        print(f'Внутренность JSON: {data["roi"]}, {data["points"]}')
+        print(len(data))
 
 
         #print(len(data["pixel_arr"]))
@@ -190,31 +255,31 @@ class MyNewModuleWidget:
         if response.status_code == 200:
             print("File sent successfully to the server.")
             data_mask = response.content.decode()
+            #print(data_mask)
+            return data_mask
         else:
             print(f"Failed to send file. Response status code: {response.status_code}")
             data_mask = []
+            return data_mask
 
-
-        #print(data_mask)
-        return data_mask
 
     def creating_mask(self):
-        mask_data = self.to_JSON()
-        mask = json.loads(mask_data)
-        mask_points = np.array(mask.get("mask_points", []))
-        mask_roi = np.array(mask.get("mask_roi", []))
-        #json_file_path = r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\mask.json"
-        combined_mask = np.array([mask_points[0], mask_points[1], mask_roi])
-        mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
-        arr_volume = slicer.util.arrayFromVolume(mainvolume)  #15, 320, 320
-        labelmap_data = combined_mask.astype(int)
-        for i in labelmap_data:
-            mask = i[0, :, :]   #320, 320
-            mask3d = mask.reshape(arr_volume[0, :, :].shape)
+        mask_data = self.to_JSON()  #строка
 
-        point_Ras = [0, 0, 0, 1]
+        mask = json.loads(mask_data) #словарь с масками
+        mask_points = np.array(mask["mask_points"])
+        mask_roi = np.array(mask["mask_roi"])
+        mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+        arr_volume = slicer.util.arrayFromVolume(mainvolume)
+        labelmap_data = mask_points.astype(int)
+        mask3d = labelmap_data[0,:,:]
+        print(mask_points, mask_points.shape)
+        print(mask3d, mask3d.shape)
+
+        point_Ras = [0, 0, 0, 1]  #начальная точка RAS
         transformRasToVolumeRas = vtk.vtkGeneralTransform()
-        slicer.vtkMRMLTransformNode.GetTransformBetweenNodes(None, mainvolume.GetParentTransformNode(), transformRasToVolumeRas)
+        slicer.vtkMRMLTransformNode.GetTransformBetweenNodes(None, mainvolume.GetParentTransformNode(),
+                                                             transformRasToVolumeRas)
         point_VolumeRas = transformRasToVolumeRas.TransformPoint(point_Ras[0:3])
 
         volumeRasToIjk = vtk.vtkMatrix4x4()
@@ -231,8 +296,6 @@ class MyNewModuleWidget:
 
         volumeNode = slicer.util.addVolumeFromArray(mask3d * 120, T, nodeClassName="vtkMRMLLabelMapVolumeNode")
 
-
-
         seg = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", 'Segmentation_prostate')
         slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(volumeNode, seg)
         seg.CreateClosedSurfaceRepresentation()
@@ -242,6 +305,9 @@ class MyNewModuleWidget:
         segment = segmentation.GetSegment(segmentation.GetNthSegmentID(0))
         segment.SetColor(230 / 255.0, 158 / 255.0, 140 / 255.0)
         segment.SetName('prostate')
+
+
+
 
 
 
@@ -259,3 +325,4 @@ class MyNewModuleWidget:
 
 #ошибка: ValueError: dictionary update sequence element #0 has length 320; 2 is required
 #←[32mINFO←[0m:     127.0.0.1:55334 - "←[1mGET /masks HTTP/1.1←[0m" ←[31m422 Unprocessable Entity←[0m
+#r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\mask.json"
