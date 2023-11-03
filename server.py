@@ -9,6 +9,8 @@ import sklearn
 from sklearn.preprocessing import MinMaxScaler
 import requests
 from typing import Any, Dict, AnyStr, List, Union
+from segment_anything.utils.transforms import ResizeLongestSide
+
 
 app = FastAPI(
 )
@@ -16,33 +18,22 @@ app = FastAPI(
 JSONObject = Dict[AnyStr, Any]
 JSONArray = List[Any]
 JSONStructure = Union[JSONArray, JSONObject]
-'''
-class Mask(BaseModel):
-    points: List[List[float]]
-    roi: List[List[float]]
-    pixel_arr: List[List[List[int]]]
 
-@app.get("/")
-async def read_root():
-    html_content = "<h1>Сервер </h1>"
-    return HTMLResponse(content=html_content)
-'''
 @app.post("/masks")
 async def data_json1(mask: JSONStructure = None):
     points = mask[b"points"]
     roi = mask[b"roi"]
     pixel_arr = np.array(mask[b"pixel_arr"])
-    print(f"Данные из json {points}, {roi}, {len(pixel_arr)}, {pixel_arr.shape}")
-    first_slice = pixel_arr[0, :, :]
-    normalized_rgb_image = normalize_pixel_array(first_slice)
-    masks_points, masks_roi = mask_array_all(points, roi, normalized_rgb_image)
-
-    print(type(masks_points), masks_points)
+    input_label = np.array(mask[b"input_label"])
+    print(f"Данные из json {pixel_arr.shape}")
+    normalized_rgb_image = normalize_pixel_array(pixel_arr)
+    masks_points, masks_roi = mask_array_all(points, roi, normalized_rgb_image, input_label)
 
     data_mask = {
         "mask_points": masks_points.tolist(),
-        "mask_roi": masks_roi
+        "mask_roi": masks_roi.tolist()
     }
+    print(len(data_mask["mask_roi"]))
 
     json_file_path = r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\masks.json"
 
@@ -53,8 +44,21 @@ async def data_json1(mask: JSONStructure = None):
 
     return data_mask
 
+class SAMModelSingleton:
+    def __init__(self):
+        self.model = None
+
+    def get_model(self):
+        if self.model is None:
+            DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+            MODEL_TYPE = "vit_h"  # загрузка модели
+            self.model = sam_model_registry[MODEL_TYPE](checkpoint='sam_vit_h_4b8939.pth').to(device=DEVICE)
+
+        return self.model
+
+sam_model_singleton = SAMModelSingleton()
+
 def normalize_pixel_array(pixel_array):
-    #pixel_array, points, roi = ...
 
     scaler = MinMaxScaler()
     # Меняем размерность массива пикселей для работы с MinMaxScaler
@@ -76,67 +80,58 @@ def normalize_pixel_array(pixel_array):
     #print(points, roi, rgb_image)
     return rgb_image
 
-def mask_array_all(points, roi, rgb_image):  # расчитано на то что есть и roi и points
-    DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    MODEL_TYPE = "vit_h"  # загрузка модели
-    sam = sam_model_registry[MODEL_TYPE](checkpoint='sam_vit_h_4b8939.pth').to(device=DEVICE)
-    # mask_generator = SamAutomaticMaskGenerator(sam)
+def mask_array_all(points, roi, rgb_image, input_label):  # расчитано на то что есть и roi и points
+    sam = sam_model_singleton.get_model()
+    resize_transform = ResizeLongestSide(sam.image_encoder.img_size)
     predictor = SamPredictor(sam)
     predictor.set_image(rgb_image)
 
-    #points = [[elem for i, elem in enumerate(sublist) if (i + 1) % 3 != 0] for sublist in points]
-    #points = [int(round(x, -1)) for x in points]
-    print(f"points {points}")
+    if len(roi) == 1:
+        input_roi = np.array(roi)
+        masks_roi, _, _ = predictor.predict(
+            point_coords=None,  # координаты точек не нужны
+            point_labels=None,  # метки для точек не нужны
+            box=input_roi[None, :],  # сделали двумерный массив
+            multimask_output=False)
+        count_true = np.count_nonzero(masks_roi)
+        print(masks_roi)
+        print(f"используется 1 ROI {count_true}")
 
-    #roi = [[round(value, 2) for value in sublist] for sublist in roi]
-    if roi:
+    elif len(roi) > 1:
         input_roi = np.array(roi)
         input_boxes = torch.tensor(input_roi, device=predictor.device)  # закидываем np.array в тензор, device=predictor.device)
-        transformed_boxes = predictor.transform.apply_boxes_torch(input_boxes, rgb_image.shape[:2])  #
+        transformed_boxes = resize_transform.apply_boxes_torch(input_boxes, rgb_image.shape[:3]) #
         masks_roi, _, _ = predictor.predict_torch(
             point_coords=None,
             point_labels=None,
-            multimask_output=False)
+            boxes=transformed_boxes,
+            multimask_output=False,
+        )
+        count_true = np.count_nonzero(masks_roi)
         print(masks_roi)
-    else:
-        masks_roi = []
+        print(f"используется 2< ROI {count_true}")
 
+
+    else:
+        masks_roi = np.array([])
     if points:
-        #input_label = np.array([1] * len(points))
-        input_label = np.array([1])
-        input_point = np.array([points])
-        #input_point = np.array([[167, 145]])
+        input_point = np.array(points)
         print(f"input point {input_point}, {type(input_point)}, {input_point.shape}")
         masks_points, scores, logits = predictor.predict(
             point_coords=input_point,
             point_labels=input_label,
             box=None,
-            multimask_output=True)  # если тут true, то выдает 3 маски
+            multimask_output=False)  # если тут true, то выдает 3 маски
         print(masks_points)
+        count_true = np.count_nonzero(masks_points)
+        print(f"кол-во true {count_true}")
+    else:
+        masks_points = np.array([])
+
     return masks_points, masks_roi
 
 
-'''
 
-def save_and_load_masks():
-    mask_points, mask_roi = mask_array_all()
-    # Сохранение
-    data = {
-        "mask_points": mask_points.tolist(),
-        "mask_roi": mask_roi.tolist()
-    }
-    with open('mask.json', "w") as json_file:
-        json.dump(data, json_file)
-    # Загрузка
-    with open('mask.json', "r") as json_file:
-        loaded_data = json.load(json_file)
-    loaded_mask_points_numpy = np.array(loaded_data["mask_points"])
-    loaded_mask_roi_numpy = np.array(loaded_data["mask_roi"])
-    loaded_mask_points = torch.tensor(loaded_mask_points_numpy)
-    loaded_mask_roi = torch.tensor(loaded_mask_roi_numpy)
-    return True
-
-'''
 
 
 
