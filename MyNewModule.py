@@ -56,6 +56,9 @@ class MyNewModuleWidget:
         # self.inputSelector.removeEnabled = False
         # self.inputSelector.setMRMLScene(slicer.mrmlScene)
         # self.formFrame.layout().addWidget(self.inputSelector)
+        button4 = qt.QPushButton("Slice")
+        button4.connect("clicked(bool)", self.current_slice)
+        self.formFrame.layout().addWidget(button4)
 
         button5 = qt.QPushButton("Scan")
         button5.connect("clicked(bool)", self.scan)
@@ -210,6 +213,7 @@ class MyNewModuleWidget:
             print('No photo')
         if mainvolume:
             self.pixelArray()
+
     def current_slice(self):
         xyz = [0.0, 0.0, 0.0]
         layoutManager = slicer.app.layoutManager()
@@ -218,8 +222,9 @@ class MyNewModuleWidget:
         layerLogic = redLogic.GetBackgroundLayer()
         xyToIJK = layerLogic.GetXYToIJKTransform()
         ijkFloat = xyToIJK.TransformDoublePoint(xyz)
-        #print(int(ijkFloat[2]))
+        print(f"current slice: {int(ijkFloat[2])}")
         return int(ijkFloat[2])
+
     def oneoneone(self):
         pixel_arr = self.pixelArray()
         shape = pixel_arr.shape()
@@ -281,8 +286,10 @@ class MyNewModuleWidget:
 
 
         #print(type(points_serializable), type(roi), type(pixel_arr_serializable))
+        username = "root"
+        password = "1111"
         headers = {'Content-Type': 'application/json'}
-        response = requests.post(url, headers=headers, json=data)
+        response = requests.post(url, headers=headers, json=data, auth=(username, password))
 
         if response.status_code == 200:
             print("File sent successfully to the server.")
@@ -299,7 +306,6 @@ class MyNewModuleWidget:
         first_slice = self.current_slice()
         mask = json.loads(mask_data)  # словарь с масками
         mask_points = np.array(mask["mask_points"]).astype(int)
-        print(f"Форма маски: {mask_points.shape}")
         mask_roi = np.array(mask["mask_roi"]).astype(int)
         #print(f"форма маски roi: {mask_points.shape}")
         shape = self.pixelArray().shape
@@ -315,14 +321,11 @@ class MyNewModuleWidget:
             point_array[first_slice] = mask_points
             mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")  #
             segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "Segmentation_prostate")
-            #segmentationNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentationNode")
             segment = segmentationNode.GetSegmentation().AddEmptySegment()
-            segmentIds = segmentationNode.GetSegmentation().GetSegmentIDs()
-            for i in range(0, len(segmentIds)):
-                segment = segmentationNode.GetSegmentation().GetNthSegment(i)
-                segment.SetName('prostate' + '_' + str(i))
-                segmentId = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName('prostate' + '_' + str(i))
-                slicer.util.updateSegmentBinaryLabelmapFromArray(point_array, segmentationNode, segmentId, mainvolume)
+            segment = segmentationNode.GetSegmentation().GetNthSegment(0)
+            segment.SetName('prostate')
+            segmentId = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName('prostate')
+            slicer.util.updateSegmentBinaryLabelmapFromArray(point_array, segmentationNode, segmentId, mainvolume)
 
         if mask_roi.any():
             roi_array = np.full(shape, 0, dtype=int)
