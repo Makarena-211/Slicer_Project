@@ -10,24 +10,45 @@ from sklearn.preprocessing import MinMaxScaler
 import requests
 from typing import Any, Dict, AnyStr, List, Union
 from segment_anything.utils.transforms import ResizeLongestSide
-
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
 
 app = FastAPI(
 )
 
+security = HTTPBasic()
 JSONObject = Dict[AnyStr, Any]
 JSONArray = List[Any]
 JSONStructure = Union[JSONArray, JSONObject]
 
+def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
+    correct_username = "root"
+    correct_password = "1111"
+    if credentials.username != correct_username or credentials.password != correct_password:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials
+
 @app.post("/masks")
-async def data_json1(mask: JSONStructure = None):
+async def data_json1(mask: JSONStructure = None, credentials: HTTPBasicCredentials = Depends(verify_credentials)):
     points = mask[b"points"]
     roi = mask[b"roi"]
     pixel_arr = np.array(mask[b"pixel_arr"])
     input_label = np.array(mask[b"input_label"])
     print(f"Данные из json {pixel_arr.shape}")
     normalized_rgb_image = normalize_pixel_array(pixel_arr)
-    masks_points, masks_roi = mask_array_all(points, roi, normalized_rgb_image, input_label)
+    DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print(DEVICE)
+    MODEL_TYPE = "vit_h"  # загрузка модели
+    model = sam_model_registry[MODEL_TYPE](checkpoint='sam_vit_h_4b8939.pth').to(device=DEVICE)
+    sam = model
+    resize_transform = ResizeLongestSide(sam.image_encoder.img_size)
+    predictor = SamPredictor(sam)
+    masks_points, masks_roi = mask_array_all(points, roi, normalized_rgb_image, input_label, predictor)
 
     data_mask = {
         "mask_points": masks_points.tolist(),
@@ -44,19 +65,6 @@ async def data_json1(mask: JSONStructure = None):
 
     return data_mask
 
-class SAMModelSingleton:
-    def __init__(self):
-        self.model = None
-
-    def get_model(self):
-        if self.model is None:
-            DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-            MODEL_TYPE = "vit_h"  # загрузка модели
-            self.model = sam_model_registry[MODEL_TYPE](checkpoint='sam_vit_h_4b8939.pth').to(device=DEVICE)
-
-        return self.model
-
-sam_model_singleton = SAMModelSingleton()
 
 def normalize_pixel_array(pixel_array):
 
@@ -80,10 +88,8 @@ def normalize_pixel_array(pixel_array):
     #print(points, roi, rgb_image)
     return rgb_image
 
-def mask_array_all(points, roi, rgb_image, input_label):  # расчитано на то что есть и roi и points
-    sam = sam_model_singleton.get_model()
-    resize_transform = ResizeLongestSide(sam.image_encoder.img_size)
-    predictor = SamPredictor(sam)
+def mask_array_all(points, roi, rgb_image, input_label, predictor):  # расчитано на то что есть и roi и points
+
     predictor.set_image(rgb_image)
 
     if len(roi) == 1:
