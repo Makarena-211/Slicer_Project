@@ -1,18 +1,21 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
-from fastapi.responses import JSONResponse, HTMLResponse
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
-from pydantic import BaseModel, conlist
+#from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+#from fastapi.responses import JSONResponse, HTMLResponse
+#from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+#from pydantic import BaseModel, conlist
+from FastSAM.fastsam.model import FastSAM
+from FastSAM.fastsam.prompt import FastSAMPrompt
+
 import torch
 import numpy as np
-import json
-import sklearn
+#import json
+#import sklearn
 from sklearn.preprocessing import MinMaxScaler
-import requests
+#import requests
 from typing import Any, Dict, AnyStr, List, Union
-from segment_anything.utils.transforms import ResizeLongestSide
+#from segment_anything.utils.transforms import ResizeLongestSide
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
+#from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
 
 app = FastAPI(
 )
@@ -39,29 +42,20 @@ async def data_json1(mask: JSONStructure = None, credentials: HTTPBasicCredentia
     roi = mask[b"roi"]
     pixel_arr = np.array(mask[b"pixel_arr"])
     input_label = np.array(mask[b"input_label"])
-    print(f"Данные из json {pixel_arr.shape}")
+    print(f"Данные из json {points, roi, type(input_label)}")
     normalized_rgb_image = normalize_pixel_array(pixel_arr)
     DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(DEVICE)
-    MODEL_TYPE = "vit_h"  # загрузка модели
-    model = sam_model_registry[MODEL_TYPE](checkpoint='sam_vit_h_4b8939.pth').to(device=DEVICE)
-    sam = model
-    resize_transform = ResizeLongestSide(sam.image_encoder.img_size)
-    predictor = SamPredictor(sam)
-    masks_points, masks_roi = mask_array_all(points, roi, normalized_rgb_image, input_label, predictor)
+    model = FastSAM("FastSAM.pt")
+    mask_points, mask_roi = mask_array_all(points, roi, normalized_rgb_image, input_label, model, DEVICE)
 
     data_mask = {
-        "mask_points": masks_points.tolist(),
-        "mask_roi": masks_roi.tolist()
+        "mask_points": mask_points.tolist(),
+        "mask_roi": mask_roi.tolist()
     }
     print(len(data_mask["mask_roi"]))
 
-    json_file_path = r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\masks.json"
 
-    #Открываем файл в режиме записи и сохраняем словарь как JSON
-    with open(json_file_path, "w") as json_file:
-        json.dump(data_mask, json_file)
-    print(masks_roi)
 
     return data_mask
 
@@ -88,53 +82,46 @@ def normalize_pixel_array(pixel_array):
     #print(points, roi, rgb_image)
     return rgb_image
 
-def mask_array_all(points, roi, rgb_image, input_label, predictor):  # расчитано на то что есть и roi и points
+def mask_array_all(points, roi, normalized_rgb_image, input_label, model, DEVICE):  # расчитано на то что есть и roi и points
+    input_points = points
+    input_points = [list(map(round, inner_list)) for inner_list in input_points]
+    roi = list(map(int, [item for sublist in roi for item in sublist]))
 
-    predictor.set_image(rgb_image)
+    print(f"input_label {input_label, type(input_label)}")
+    print(f"points {input_points, type(input_points)}")
+    print(f"roi {roi, type(roi)}")
 
-    if len(roi) == 1:
-        input_roi = np.array(roi)
-        masks_roi, _, _ = predictor.predict(
-            point_coords=None,  # координаты точек не нужны
-            point_labels=None,  # метки для точек не нужны
-            box=input_roi[None, :],  # сделали двумерный массив
-            multimask_output=False)
-        count_true = np.count_nonzero(masks_roi)
-        print(masks_roi)
-        print(f"используется 1 ROI {count_true}")
-
-    elif len(roi) > 1:
-        input_roi = np.array(roi)
-        input_boxes = torch.tensor(input_roi, device=predictor.device)  # закидываем np.array в тензор, device=predictor.device)
-        transformed_boxes = resize_transform.apply_boxes_torch(input_boxes, rgb_image.shape[:3]) #
-        masks_roi, _, _ = predictor.predict_torch(
-            point_coords=None,
-            point_labels=None,
-            boxes=transformed_boxes,
-            multimask_output=False,
-        )
-        count_true = np.count_nonzero(masks_roi)
-        print(masks_roi)
-        print(f"используется 2< ROI {count_true}")
+    model = model
+    IMAGE_PATH = normalized_rgb_image
+    DEVICE = DEVICE
 
 
+    if len(roi) > 0:
+        everything_results_roi = model(IMAGE_PATH, device=DEVICE, retina_masks=True, imgsz=1024, conf=0.4, iou=0.9, )
+        prompt_process_roi = FastSAMPrompt(IMAGE_PATH, everything_results_roi, device=DEVICE)
+        mask_roi = prompt_process_roi.box_prompt(bbox=roi)
+        count_true = np.count_nonzero(mask_roi)
     else:
-        masks_roi = np.array([])
-    if points:
-        input_point = np.array(points)
-        print(f"input point {input_point}, {type(input_point)}, {input_point.shape}")
-        masks_points, scores, logits = predictor.predict(
-            point_coords=input_point,
-            point_labels=input_label,
-            box=None,
-            multimask_output=False)  # если тут true, то выдает 3 маски
-        print(masks_points)
-        count_true = np.count_nonzero(masks_points)
-        print(f"кол-во true {count_true}")
+        mask_roi = np.array([])
+    if len(input_points) > 0:
+        everything_results_point = model(IMAGE_PATH, device=DEVICE, retina_masks=True, imgsz=1024, conf=0.55, iou=0.75, )
+        prompt_process_point = FastSAMPrompt(IMAGE_PATH, everything_results_point, device=DEVICE)
+        mask_points = prompt_process_point.point_prompt(points=input_points, pointlabel=input_label)
+        count_true = np.count_nonzero(mask_points)
     else:
-        masks_points = np.array([])
+        mask_points = np.array([])
+    print(mask_points, mask_roi, type(mask_points), type(mask_roi))
+    print(count_true)
 
-    return masks_points, masks_roi
+    return mask_points, mask_roi
+
+
+
+
+
+
+
+
 
 
 

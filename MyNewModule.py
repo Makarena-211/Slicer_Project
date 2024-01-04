@@ -3,15 +3,14 @@ import slicer
 import ctk
 import vtk
 from slicer.ScriptedLoadableModule import *
-from slicer.util import getNode
-
-from sklearn.preprocessing import MinMaxScaler
-import torch
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
 import numpy as np
 import json
 import requests
-from vtk.util import numpy_support
+#from vtk.util import numpy_support
+#from slicer.util import getNode
+#from sklearn.preprocessing import MinMaxScaler
+#import torch
+#from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
 
 
 class MyNewModule:
@@ -232,7 +231,6 @@ class MyNewModuleWidget:
         #print(zero_array[self.current_slice(), :, :].shape)
 
     def to_JSON(self):
-        outputFileName = r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\data.json"
         url = 'http://127.0.0.1:8000/masks'
 
         try:
@@ -274,14 +272,11 @@ class MyNewModuleWidget:
         }
 
 
-        data1 = {
-            'pixel_arr': pixel_arr_serializable
-        }
-        print(f"input_label{input_label}")
-        print(f'Внутренность JSON: {data["roi"]}, {data["points"]}, {len(data["pixel_arr"])}')
+
+
+        print(f'Внутренность JSON: {data["roi"]}, {data["points"]}, {data["input_label"]}')
         print(len(data))
-        with open(outputFileName, "w") as json_file:
-            json.dump(data1, json_file)
+
 
 
 
@@ -312,9 +307,6 @@ class MyNewModuleWidget:
         print(shape)#размерность dicom  (15,320,320)
         #print(f"shape: {mask_roi.shape}")
         print(f'first_slice {first_slice}')
-
-
-
 
         if mask_points.any():
             point_array = np.full(shape, 0, dtype=int)
