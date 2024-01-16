@@ -4,7 +4,6 @@
 #from pydantic import BaseModel, conlist
 from FastSAM.fastsam.model import FastSAM
 from FastSAM.fastsam.prompt import FastSAMPrompt
-
 import torch
 import numpy as np
 #import json
@@ -16,7 +15,9 @@ from typing import Any, Dict, AnyStr, List, Union
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 #from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
-
+from MobileSAM.mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+from MobileSAM.mobile_sam.modeling import sam
+import torch
 app = FastAPI(
 )
 
@@ -46,16 +47,21 @@ async def data_json1(mask: JSONStructure = None, credentials: HTTPBasicCredentia
     normalized_rgb_image = normalize_pixel_array(pixel_arr)
     DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(DEVICE)
+    model_type = "vit_t"
+    sam_checkpoint = r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\MobileSAM\weights\mobile_sam.pt"
     model = FastSAM("FastSAM.pt")
-    mask_points, mask_roi = mask_array_all(points, roi, normalized_rgb_image, input_label, model, DEVICE)
+    mobile_sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
+    mobile_sam.to(device=DEVICE)
+    mobile_sam.eval()
+    predictor = SamPredictor(mobile_sam)
+    predictor.set_image(normalized_rgb_image)
+    mask_points, mask_roi = mask_array_all(points, roi, input_label, predictor)
 
     data_mask = {
         "mask_points": mask_points.tolist(),
         "mask_roi": mask_roi.tolist()
     }
     print(len(data_mask["mask_roi"]))
-
-
 
     return data_mask
 
@@ -82,35 +88,35 @@ def normalize_pixel_array(pixel_array):
     #print(points, roi, rgb_image)
     return rgb_image
 
-def mask_array_all(points, roi, normalized_rgb_image, input_label, model, DEVICE):  # расчитано на то что есть и roi и points
-    input_points = points
-    input_points = [list(map(round, inner_list)) for inner_list in input_points]
+def mask_array_all(points, roi, input_label, predictor):  # расчитано на то что есть и roi и points
+    input_point = points
+    input_point = [list(map(round, inner_list)) for inner_list in input_point]
     roi = list(map(int, [item for sublist in roi for item in sublist]))
 
     print(f"input_label {input_label, type(input_label)}")
-    print(f"points {input_points, type(input_points)}")
+    print(f"points {input_point, type(input_point)}")
     print(f"roi {roi, type(roi)}")
-
-    model = model
-    IMAGE_PATH = normalized_rgb_image
-    DEVICE = DEVICE
-
-
     if len(roi) > 0:
-        everything_results_roi = model(IMAGE_PATH, device=DEVICE, retina_masks=True, imgsz=1024, conf=0.4, iou=0.9, )
-        prompt_process_roi = FastSAMPrompt(IMAGE_PATH, everything_results_roi, device=DEVICE)
-        mask_roi = prompt_process_roi.box_prompt(bbox=roi)
+        mask_roi, _, _ = predictor.predict(
+            point_coords=None,  # координаты точек не нужны
+            point_labels=None,  # метки для точек не нужны
+            box=np.array(roi),  # сделали двумерный массив
+            multimask_output=False,
+        )
         count_true = np.count_nonzero(mask_roi)
     else:
         mask_roi = np.array([])
-    if len(input_points) > 0:
-        everything_results_point = model(IMAGE_PATH, device=DEVICE, retina_masks=True, imgsz=1024, conf=0.55, iou=0.75, )
-        prompt_process_point = FastSAMPrompt(IMAGE_PATH, everything_results_point, device=DEVICE)
-        mask_points = prompt_process_point.point_prompt(points=input_points, pointlabel=input_label)
+    if len(input_point) > 0:
+        mask_points, scores, logits = predictor.predict(
+            point_coords=np.array(input_point),
+            point_labels=input_label,
+            multimask_output=False,  # если тут true, то выдает 3 маски
+        )
         count_true = np.count_nonzero(mask_points)
     else:
         mask_points = np.array([])
-    print(mask_points, mask_roi, type(mask_points), type(mask_roi))
+
+    print(mask_points, type(mask_points))
     print(count_true)
 
     return mask_points, mask_roi
