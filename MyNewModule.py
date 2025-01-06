@@ -146,7 +146,7 @@ class MyNewModuleWidget:
                 centers = roi_node.GetNthControlPointPositionWorld(i)
                 ras_roi_all.append(centers)
                 ras_roi_all = [list(coord) for coord in ras_roi_all]
-        #print(f"центр: {ras_roi_all}, размер: {sizes}")
+        print(f"центр: {ras_roi_all}, размер: {sizes}")
         return ras_roi_all, sizes
 
 
@@ -168,7 +168,7 @@ class MyNewModuleWidget:
                 ijk[i] += rasToIjkMatrix.GetElement(i, j) * coords_list[j]
         ijk.pop()
         ijk.pop()
-        #print(f"Результат {ijk}, {type(ijk)}")
+        print(f"Результат {ijk}, {type(ijk)}")
         return ijk
 
     def ras_to_ijk_roi(self):
@@ -228,7 +228,7 @@ class MyNewModuleWidget:
         pixel_arr = self.pixelArray()
         shape = pixel_arr.shape()
         zero_array = np.zeros(shape)
-        #print(zero_array[self.current_slice(), :, :].shape)
+        print(zero_array[self.current_slice(), :, :].shape)
 
     def to_JSON(self):
         url = 'http://127.0.0.1:8000/masks'
@@ -246,20 +246,20 @@ class MyNewModuleWidget:
 
         try:
             ijk_roi = self.ras_to_ijk_roi()
-            #roi = [list(coord) for coord in roi]
+            roi = [list(coord) for coord in roi]
         except Exception as e:
             ijk_roi = []
 
         try:
             pixel_arr = self.pixelArray()
             pixel_arr = pixel_arr[self.current_slice(), :, :]
-            #print(f"форма pixel_arr: {pixel_arr.shape}")
+            print(f"форма pixel_arr: {pixel_arr.shape}")
             pixel_arr_serializable = pixel_arr.tolist()  # Преобразовываем ndarray в список
         except Exception as e:
             pixel_arr_serializable = []
         try:
             input_label = self.input_label()
-            #print(f"input_label: {input_label}")
+            print(f"input_label: {input_label}")
         except Exception as e:
             input_label = []
 

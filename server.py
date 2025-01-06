@@ -1,9 +1,9 @@
 #from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 #from fastapi.responses import JSONResponse, HTMLResponse
-#from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+from segment_anything import sam_model_registry, SamPredictor
 #from pydantic import BaseModel, conlist
-from FastSAM.fastsam.model import FastSAM
-from FastSAM.fastsam.prompt import FastSAMPrompt
+# from ultralytics import FastSAM
+# from FastSAM.fastsam.prompt import FastSAMPrompt
 import torch
 import numpy as np
 #import json
@@ -15,8 +15,8 @@ from typing import Any, Dict, AnyStr, List, Union
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 #from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
-from MobileSAM.mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
-from MobileSAM.mobile_sam.modeling import sam
+# from MobileSAM.mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+# from MobileSAM.mobile_sam.modeling import sam
 import torch
 app = FastAPI(
 )
@@ -47,13 +47,13 @@ async def data_json1(mask: JSONStructure = None, credentials: HTTPBasicCredentia
     normalized_rgb_image = normalize_pixel_array(pixel_arr)
     DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(DEVICE)
-    model_type = "vit_t"
-    sam_checkpoint = r"C:\Users\mnfom\Documents\Работа\ML\pythonProject\MobileSAM\weights\mobile_sam.pt"
-    model = FastSAM("FastSAM.pt")
-    mobile_sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
-    mobile_sam.to(device=DEVICE)
-    mobile_sam.eval()
-    predictor = SamPredictor(mobile_sam)
+    model_type = "vit_h"
+    sam_checkpoint = "sam_vit_h_4b8939.pth"
+    # model = FastSAM("FastSAM.pt")
+    sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
+    sam.to(device=DEVICE)
+    sam.eval()
+    predictor = SamPredictor(sam)
     predictor.set_image(normalized_rgb_image)
     mask_points, mask_roi = mask_array_all(points, roi, input_label, predictor)
 
