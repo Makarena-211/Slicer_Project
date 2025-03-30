@@ -1,8 +1,8 @@
-import qt
+from PyQt6 import QtWidgets as qt
 import slicer
 import ctk
 import vtk
-from slicer.ScriptedLoadableModule import *
+# from slicer.ScriptedLoadableModule import *
 import numpy as np
 import json
 import requests

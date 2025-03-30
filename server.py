@@ -1,10 +1,8 @@
 #from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 #from fastapi.responses import JSONResponse, HTMLResponse
 from segment_anything import sam_model_registry, SamPredictor
-#from pydantic import BaseModel, conlist
 # from ultralytics import FastSAM
 # from FastSAM.fastsam.prompt import FastSAMPrompt
-import torch
 import numpy as np
 #import json
 #import sklearn
@@ -14,12 +12,29 @@ from typing import Any, Dict, AnyStr, List, Union
 #from segment_anything.utils.transforms import ResizeLongestSide
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from contextlib import asynccontextmanager
 #from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
 # from MobileSAM.mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
 # from MobileSAM.mobile_sam.modeling import sam
-import torch
-app = FastAPI(
-)
+
+#TODO: прикрутить lifespan для инициализации модели в нем
+#TODO: почистить код на сервере
+#TODO: рассмотреть какая модель работает быстрее
+#TODO: сделать правильные креды в венве
+model_type = "vit_h"
+sam_checkpoint = "sam_vit_h_4b8939.pth"
+@asynccontextmanager
+async def lifespan(app):
+    sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
+    sam.eval()
+    predictor = SamPredictor(sam)
+    app.state.predictor = predictor
+    yield 
+    del predictor
+    del sam
+
+app = FastAPI(lifespan=lifespan)
+
 
 security = HTTPBasic()
 JSONObject = Dict[AnyStr, Any]
@@ -44,18 +59,10 @@ async def data_json1(mask: JSONStructure = None, credentials: HTTPBasicCredentia
     pixel_arr = np.array(mask[b"pixel_arr"])
     input_label = np.array(mask[b"input_label"])
     print(f"Данные из json {points, roi, type(input_label)}")
-    normalized_rgb_image = normalize_pixel_array(pixel_arr)
-    DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    print(DEVICE)
-    model_type = "vit_h"
-    sam_checkpoint = "sam_vit_h_4b8939.pth"
-    # model = FastSAM("FastSAM.pt")
-    sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
-    sam.to(device=DEVICE)
-    sam.eval()
-    predictor = SamPredictor(sam)
+    normalized_rgb_image = await normalize_pixel_array(pixel_arr)
+    predictor = app.state.predictor
     predictor.set_image(normalized_rgb_image)
-    mask_points, mask_roi = mask_array_all(points, roi, input_label, predictor)
+    mask_points, mask_roi = await mask_array_all(points, roi, input_label, predictor)
 
     data_mask = {
         "mask_points": mask_points.tolist(),
@@ -66,7 +73,7 @@ async def data_json1(mask: JSONStructure = None, credentials: HTTPBasicCredentia
     return data_mask
 
 
-def normalize_pixel_array(pixel_array):
+async def normalize_pixel_array(pixel_array):
 
     scaler = MinMaxScaler()
     # Меняем размерность массива пикселей для работы с MinMaxScaler
@@ -88,7 +95,7 @@ def normalize_pixel_array(pixel_array):
     #print(points, roi, rgb_image)
     return rgb_image
 
-def mask_array_all(points, roi, input_label, predictor):  # расчитано на то что есть и roi и points
+async def mask_array_all(points, roi, input_label, predictor):  # расчитано на то что есть и roi и points
     input_point = points
     input_point = [list(map(round, inner_list)) for inner_list in input_point]
     roi = list(map(int, [item for sublist in roi for item in sublist]))

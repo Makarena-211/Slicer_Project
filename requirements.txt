@@ -1,0 +1,8 @@
+requests==2.32.3
+slicer==0.0.8
+ctk==0.1
+json==2.0.9
+PyQt6==6.8.1
+vtk==9.4.2
+segment_anything==1.0
+fastapi==0.115.12
