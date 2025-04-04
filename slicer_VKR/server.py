@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Union
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import JSONResponse
+from models import MaskRequest, MaskResponse
 from contextlib import asynccontextmanager
 
 # Конфигурация модели
@@ -18,19 +19,20 @@ PASSWORD = "1111"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.info("Инициализация модели SAM")
-    sam = sam_model_registry[MODEL_TYPE](checkpoint=SAM_CHECKPOINT)
-    sam.eval()
-    app.state.predictor = SamPredictor(sam)
-    yield
-    del app.state.predictor, sam
-    logging.info("Модель SAM выгружена из памяти")
+    try:
+        sam = sam_model_registry[MODEL_TYPE](checkpoint=SAM_CHECKPOINT)
+        sam.eval()
+        app.state.predictor = SamPredictor(sam)
+        yield
+    except Exception as e:
+        logging.error(f"Ошибка инициализации модели SAM: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка инициализации модели SAM")
+    finally:
+        del app.state.predictor, sam
+        logging.info("Модель SAM выгружена из памяти")
 
 app = FastAPI(lifespan=lifespan)
 security = HTTPBasic()
-
-JSONObject = Dict[str, Any]
-JSONArray = List[Any]
-JSONStructure = Union[JSONArray, JSONObject]
 
 async def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
     if credentials.username != USERNAME or credentials.password != PASSWORD:
@@ -56,60 +58,66 @@ async def general_exception_handler(request, exc: Exception):
         content={"detail": "Internal Server Error"},
     )
 
-async def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
-    if credentials.username != USERNAME or credentials.password != PASSWORD:
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect credentials",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    return credentials
-
-@app.post("/masks")
-async def generate_masks(mask: JSONStructure):
+@app.post("/masks", response_model=MaskResponse)
+async def generate_masks(mask: MaskRequest):
     try:
-        points = np.array(mask.get("points", []))
-        roi = np.array(mask.get("roi", []))
-        pixel_arr = np.array(mask.get("pixel_arr", []))
-        input_label = np.array(mask.get("input_label", []))
-    except Exception as e:
+        points = np.array(mask.points)
+        roi = np.array(mask.roi)
+        pixel_arr = np.array(mask.pixel_arr)
+        input_label = np.array(mask.input_label)
+    except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Ошибка обработки входных данных: {e}")
     
     logging.info("Обработка входных данных JSON")
-    normalized_rgb_image = await normalize_pixel_array(pixel_arr)
+    
+    try:
+        normalized_rgb_image = await normalize_pixel_array(pixel_arr)
+    except HTTPException as e:
+        raise e
+
     predictor = app.state.predictor
     predictor.set_image(normalized_rgb_image)
-    mask_points, mask_roi = await mask_array_all(points, roi, input_label, predictor)
 
-    return {"mask_points": mask_points.tolist(), "mask_roi": mask_roi.tolist()}
+    try:
+        mask_points, mask_roi = await mask_array_all(points, roi, input_label, predictor)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка генерации масок: {e}")
+
+    return MaskResponse(mask_points=mask_points.tolist(), mask_roi=mask_roi.tolist())
 
 async def normalize_pixel_array(pixel_array: np.ndarray) -> np.ndarray:
     if pixel_array.size == 0:
         raise HTTPException(status_code=400, detail="Пустой массив пикселей")
     
-    scaler = MinMaxScaler()
-    reshaped_pixel_array = pixel_array.reshape(-1, 1)
-    normalized_pixel_array = scaler.fit_transform(reshaped_pixel_array).reshape(pixel_array.shape)
-    rgb_image = (np.stack([normalized_pixel_array] * 3, axis=-1) * 255).astype(np.uint8)
-    return rgb_image
+    try:
+        scaler = MinMaxScaler()
+        reshaped_pixel_array = pixel_array.reshape(-1, 1)
+        normalized_pixel_array = scaler.fit_transform(reshaped_pixel_array).reshape(pixel_array.shape)
+        rgb_image = (np.stack([normalized_pixel_array] * 3, axis=-1) * 255).astype(np.uint8)
+        return rgb_image
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка нормализации пикселей: {e}")
 
 async def mask_array_all(points: np.ndarray, roi: np.ndarray, input_label: np.ndarray, predictor: SamPredictor):
     logging.info("Генерация масок")
     mask_points, mask_roi = np.array([]), np.array([])
     
-    if roi.size > 0:
-        mask_roi, _, _ = predictor.predict(
-            point_coords=None,
-            point_labels=None,
-            box=roi,
-            multimask_output=False,
-        )
-    
-    if points.size > 0:
-        mask_points, _, _ = predictor.predict(
-            point_coords=points,
-            point_labels=input_label,
-            multimask_output=False,
-        )
+    try:
+        if roi.size > 0:
+            mask_roi, _, _ = predictor.predict(
+                point_coords=None,
+                point_labels=None,
+                box=roi,
+                multimask_output=False,
+            )
+        
+        if points.size > 0:
+            mask_points, _, _ = predictor.predict(
+                point_coords=points,
+                point_labels=input_label,
+                multimask_output=False,
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при генерации масок: {e}")
     
     return mask_points, mask_roi
