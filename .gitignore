@@ -6,4 +6,5 @@ __pypackages__/
 *.pt
 .venv
 *.pyc
+*.dcm
 *.yaml

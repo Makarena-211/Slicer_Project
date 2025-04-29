@@ -2,9 +2,16 @@ import qt
 import slicer
 import ctk
 import vtk
+# from slicer.ScriptedLoadableModule import *
 import numpy as np
 import json
 import requests
+#from vtk.util import numpy_support
+#from slicer.util import getNode
+#from sklearn.preprocessing import MinMaxScaler
+#import torch
+#from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+
 
 class MyNewModule:
     def __init__(self, parent):  # функция с названиями, инициалами и тд
@@ -55,6 +62,16 @@ class MyNewModuleWidget:
         button5 = qt.QPushButton("Scan")
         button5.connect("clicked(bool)", self.scan)
         self.formFrame.layout().addWidget(button5)
+
+        button1 = qt.QPushButton("ROI")
+        button1.connect("clicked(bool)", self.ras_to_ijk_roi)
+        self.formFrame.layout().addWidget(button1)
+
+        button22 = qt.QPushButton("ROI2")
+        button22.connect("clicked(bool)", self.get_sam_roi_coordinates)
+        self.formFrame.layout().addWidget(button22)
+        
+        
 
         button6 = qt.QPushButton("Mask")
         button6.connect("clicked(bool)", self.creating_mask)
@@ -143,6 +160,41 @@ class MyNewModuleWidget:
         return ras_roi_all, sizes
 
 
+    def get_sam_roi_coordinates(self):
+        volumeNode = slicer.util.getNode('vtkMRMLScalarVolumeNode*')
+        if not volumeNode:
+            raise ValueError("Volume node not найден")
+
+        roiNode = slicer.util.getNode('vtkMRMLMarkupsROINode*')
+        if not roiNode:
+            raise ValueError("ROI не найден")
+
+        centerRAS = np.array(roiNode.GetCenter())
+        sizeRAS = np.array(roiNode.GetSize())  # [x, y, z]
+
+        minRAS = centerRAS - sizeRAS / 2
+        maxRAS = centerRAS + sizeRAS / 2
+
+        rasToIjkMatrix = vtk.vtkMatrix4x4()
+        volumeNode.GetRASToIJKMatrix(rasToIjkMatrix)
+
+        def ras_to_ijk(ras_coords):
+            ras_coords_hom = list(ras_coords) + [1.0]
+            ijk_coords = [0.0, 0.0, 0.0, 0.0]
+            rasToIjkMatrix.MultiplyPoint(ras_coords_hom, ijk_coords)
+            return [int(round(c)) for c in ijk_coords[:3]]
+
+        minIJK = ras_to_ijk(minRAS)
+        maxIJK = ras_to_ijk(maxRAS)
+
+        x1, y1 = min(minIJK[0], maxIJK[0]), min(minIJK[1], maxIJK[1])
+        x2, y2 = max(minIJK[0], maxIJK[0]), max(minIJK[1], maxIJK[1])
+
+        sam_roi = [x1, y1, x2, y2]
+        print("SAM ROI координаты:", sam_roi)
+        return sam_roi
+
+
     def pixelArray(self):
         mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode") #если пустой то = None
         pixel_array = slicer.util.arrayFromVolume(mainvolume) #получили pixel_array изображения
@@ -225,6 +277,7 @@ class MyNewModuleWidget:
 
     def to_JSON(self):
         url = 'http://127.0.0.1:8000/masks'
+
         try:
             ijk_points = []
             ras_points = self.get_many_coords()
@@ -240,7 +293,7 @@ class MyNewModuleWidget:
             ijk_roi = self.ras_to_ijk_roi()
             roi = [list(coord) for coord in roi]
         except Exception as e:
-            ijk_roi = []
+            print(e)
 
         try:
             pixel_arr = self.pixelArray()
@@ -255,6 +308,7 @@ class MyNewModuleWidget:
         except Exception as e:
             input_label = []
 
+
         data = {
             "points": ijk_points,  # Используем преобразованные данные
             "roi": ijk_roi,
@@ -263,8 +317,14 @@ class MyNewModuleWidget:
         }
 
 
+
+        print(f"pixel_arr: {data['pixel_arr']}")
+        print(f"pixel_arr {len(data['pixel_arr'])}")
+        print(f"pixel_arr {type(data['pixel_arr'])}")
         print(f'Внутренность JSON: {data["roi"]}, {data["points"]}, {data["input_label"]}')
         print(len(data))
+
+
 
 
         #print(type(points_serializable), type(roi), type(pixel_arr_serializable))
@@ -315,7 +375,6 @@ class MyNewModuleWidget:
             segmentId = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName('Segment_1')
             slicer.util.updateSegmentBinaryLabelmapFromArray(roi_array, segmentationNode,
                                                              segmentId, mainvolume)
-
 
 
 

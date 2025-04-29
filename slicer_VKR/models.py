@@ -1,12 +1,12 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Union
 
 class MaskRequest(BaseModel):
-    points: List[List[float]]  
-    roi: List[float]            
-    pixel_arr: List[List[float]] 
-    input_label: List[float]     
+    points: Union[List[List[float]], List[List[int]], List] 
+    roi: Union[List[List[float]], List[List[int]], List]
+    pixel_arr: List[List[int]]
+    input_label: List[int]     
 
 class MaskResponse(BaseModel):
-    mask_points: List[List[float]]
-    mask_roi: List[float]
+    mask_points: Union[List[List[List[bool]]], List]
+    mask_roi: Union[List[List[List[bool]]], List]

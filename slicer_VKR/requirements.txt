@@ -5,6 +5,11 @@ PyQt6==6.8.1
 vtk==9.4.2
 segment_anything==1.0
 fastapi==0.115.12
-torch==2.6.0
-sklearn.preprocessing==0.1.0
+scikit-learn==1.6.1
 pydantic==2.11.1
+onnx==1.16.2
+onnxruntime==1.16.3
+opencv-python==4.7.0.72
+onnxsim==0.4.36p
+uvicorn==0.34.2
+image==1.5.33
