@@ -1,20 +1,22 @@
-from segment_anything import sam_model_registry, SamPredictor
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 import numpy as np
 import logging
 from inference_utils import SegmentAnythingONNX
 from sklearn.preprocessing import MinMaxScaler
-from typing import Any, Dict, List, Union
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import JSONResponse
 from models import MaskRequest, MaskResponse
 from contextlib import asynccontextmanager
-import onnxruntime
 
-ENCODER_MODEL_PATH = r"C:\Users\mnfom\Documents\Finance1\vkr\Slicer_Project\slicer_VKR\sam_vit_h_4b8939.encoder.onnx"
-DECODER_MODEL_PATH = r"C:\Users\mnfom\Documents\Finance1\vkr\Slicer_Project\slicer_VKR\sam_vit_h_4b8939.decoder.onnx"
-USERNAME = "root"
-PASSWORD = "1111"
+ENCODER_MODEL_PATH = os.getenv("ENCODER_MODEL_PATH")
+DECODER_MODEL_PATH = os.getenv("DECODER_MODEL_PATH")
+USERNAME = os.getenv("USERNAME")
+PASSWORD = os.getenv("PASSWORD")
 
 logging.basicConfig(level=logging.INFO)
 

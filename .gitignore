@@ -8,3 +8,6 @@ __pypackages__/
 *.pyc
 *.dcm
 *.yaml
+*.env
+*.onnx
+*.bin
