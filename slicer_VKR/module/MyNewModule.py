@@ -2,17 +2,9 @@ import qt
 import slicer
 import ctk
 import vtk
-# from slicer.ScriptedLoadableModule import *
 import numpy as np
 import json
 import requests
-#from vtk.util import numpy_support
-#from slicer.util import getNode
-#from sklearn.preprocessing import MinMaxScaler
-#import torch
-#from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
-
-
 class MyNewModule:
     def __init__(self, parent):  # функция с названиями, инициалами и тд
         parent.title = "MLMedicine Module"
@@ -324,9 +316,6 @@ class MyNewModuleWidget:
         print(f'Внутренность JSON: {data["roi"]}, {data["points"]}, {data["input_label"]}')
         print(len(data))
 
-
-
-
         #print(type(points_serializable), type(roi), type(pixel_arr_serializable))
         username = "root"
         password = "1111"
@@ -344,20 +333,18 @@ class MyNewModuleWidget:
             return data_mask
 
     def creating_mask(self):
-        mask_data = self.to_JSON()  # строка
+        mask_data = self.to_JSON()  
         first_slice = self.current_slice()
-        mask = json.loads(mask_data)  # словарь с масками
-        mask_points = np.array(mask["mask_points"]).astype(int)
-        mask_roi = np.array(mask["mask_roi"]).astype(int)
-        #print(f"форма маски roi: {mask_points.shape}")
+        mask = json.loads(mask_data) 
+        mask_fiducials = np.array(mask["mask_fiducials"])
+        print(f"форма маски roi: {mask_fiducials.shape}")
         shape = self.pixelArray().shape
-        print(shape)#размерность dicom  (15,320,320)
-        #print(f"shape: {mask_roi.shape}")
+        print(shape)
         print(f'first_slice {first_slice}')
 
-        if mask_points.any():
+        if mask_fiducials.any():
             point_array = np.full(shape, 0, dtype=int)
-            point_array[first_slice] = mask_points
+            point_array[first_slice] = mask_fiducials
             mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")  #
             segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "Segmentation_prostate")
             segment = segmentationNode.GetSegmentation().AddEmptySegment()
@@ -365,16 +352,6 @@ class MyNewModuleWidget:
             segment.SetName('prostate')
             segmentId = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName('prostate')
             slicer.util.updateSegmentBinaryLabelmapFromArray(point_array, segmentationNode, segmentId, mainvolume)
-
-        if mask_roi.any():
-            roi_array = np.full(shape, 0, dtype=int)
-            roi_array[first_slice] = mask_roi
-            mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")  #
-            segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "Segmentation_prostate")
-            segment = segmentationNode.GetSegmentation().AddEmptySegment()
-            segmentId = segmentationNode.GetSegmentation().GetSegmentIdBySegmentName('Segment_1')
-            slicer.util.updateSegmentBinaryLabelmapFromArray(roi_array, segmentationNode,
-                                                             segmentId, mainvolume)
 
 
 

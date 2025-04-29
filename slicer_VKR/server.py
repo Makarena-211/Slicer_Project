@@ -1,7 +1,7 @@
 from segment_anything import sam_model_registry, SamPredictor
 import numpy as np
 import logging
-import torch
+from inference_utils import SegmentAnythingONNX
 from sklearn.preprocessing import MinMaxScaler
 from typing import Any, Dict, List, Union
 from fastapi import FastAPI, HTTPException, Depends
@@ -9,24 +9,30 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import JSONResponse
 from models import MaskRequest, MaskResponse
 from contextlib import asynccontextmanager
+import onnxruntime
 
-MODEL_TYPE = "vit_h"
-SAM_CHECKPOINT = "sam_vit_h_4b8939.pth"
+ENCODER_MODEL_PATH = r"C:\Users\mnfom\Documents\Finance1\vkr\Slicer_Project\slicer_VKR\sam_vit_h_4b8939.encoder.onnx"
+DECODER_MODEL_PATH = r"C:\Users\mnfom\Documents\Finance1\vkr\Slicer_Project\slicer_VKR\sam_vit_h_4b8939.decoder.onnx"
 USERNAME = "root"
 PASSWORD = "1111"
+
+logging.basicConfig(level=logging.INFO)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.info("Инициализация модели SAM")
+    logging.info("Инициализация SAM ONNX модели")
     try:
-        sam = sam_model_registry[MODEL_TYPE](checkpoint=SAM_CHECKPOINT)
-        sam.eval()
-        app.state.predictor = SamPredictor(sam)
+        model = SegmentAnythingONNX(
+            encoder_model_path=ENCODER_MODEL_PATH,
+            decoder_model_path=DECODER_MODEL_PATH,
+        )
+        app.state.model = model
         yield
     except Exception as e:
-        logging.error(f"Ошибка инициализации модели SAM: {e}")
+        logging.error(f"Ошибка инициализации модели: {e}")
         raise HTTPException(status_code=500, detail="Ошибка инициализации модели SAM")
     finally:
-        del app.state.predictor, sam
+        del app.state.model
         logging.info("Модель SAM выгружена из памяти")
 
 app = FastAPI(lifespan=lifespan)
@@ -70,18 +76,28 @@ async def generate_masks(mask: MaskRequest):
     
     try:
         normalized_rgb_image = await normalize_pixel_array(pixel_arr)
+        np.set_printoptions(threshold=np.inf)
+        
+        # logging.info(f"IMAGE: {normalized_rgb_image}")
+        # logging.info(f"IMAGE: {type(normalized_rgb_image)}")
+        # logging.info(f"IMAGE: {normalized_rgb_image.shape}")
     except HTTPException as e:
         raise e
 
-    predictor = app.state.predictor
-    predictor.set_image(normalized_rgb_image)
+    model = app.state.model
 
     try:
-        mask_points, mask_roi = await mask_array_all(points, roi, input_label, predictor)
+        embedding = model.encode(normalized_rgb_image)
+    except Exception as e:
+        logging.error(f"Ошибка кодирования изображения: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка кодирования изображения")
+
+    try:
+        masks = await mask_array_all(points=points, roi=roi, input_label=input_label, embedding=embedding, model=model)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка генерации масок: {e}")
 
-    return MaskResponse(mask_points=mask_points.tolist(), mask_roi=mask_roi.tolist())
+    return MaskResponse(mask_fiducials=masks.tolist())
 
 
 async def normalize_pixel_array(pixel_array):
@@ -100,30 +116,27 @@ async def normalize_pixel_array(pixel_array):
     rgb_image = (rgb_image * 255).astype(np.uint8)
     return rgb_image
 
-async def mask_array_all(points: np.ndarray, roi: np.ndarray, input_label: np.ndarray, predictor: SamPredictor):
+async def mask_array_all(points: np.ndarray, roi: np.ndarray, input_label: np.ndarray, embedding, model):
     logging.info("Генерация масок")
-    mask_points, mask_roi = np.array([]), np.array([])
-    print(roi)
-    
-    try:
-        if roi.size > 0:
-            mask_roi, _, _ = predictor.predict(
-                point_coords=None,
-                point_labels=None,
-                box=roi,
-                multimask_output=False,
-            )
-        
-        if points.size > 0:
-            mask_points, _, _ = predictor.predict(
-                point_coords=points,
-                point_labels=input_label,
-                multimask_output=False,
-            )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка при генерации масок: {e}")
 
-    return mask_points, mask_roi
+    print(roi)
+    print(points)
+    prompt = []
+    
+    if roi.size > 0:
+        prompt = [{"type": "rectangle", "data": roi[0]}]
+    elif points.size > 0:
+        prompt = [{"type":"point", "data":points[0], "label":input_label[0]}]
+    logging.info(f"Prompt: {prompt}")
+    try:
+        masks = model.predict_masks(embedding, prompt)
+        np.save("mask.npy", masks)
+    except Exception as e:
+        logging.info(f"Error:{e}")
+    mask_fiducials = (masks > 0.5).astype(np.uint8)
+
+
+    return mask_fiducials
 
 
 

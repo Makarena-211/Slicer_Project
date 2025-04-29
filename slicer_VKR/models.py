@@ -8,5 +8,4 @@ class MaskRequest(BaseModel):
     input_label: List[int]     
 
 class MaskResponse(BaseModel):
-    mask_points: Union[List[List[List[bool]]], List]
-    mask_roi: Union[List[List[List[bool]]], List]
+    mask_fiducials: Union[List[List[List[bool]]], List]
