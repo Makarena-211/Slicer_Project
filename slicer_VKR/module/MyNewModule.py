@@ -6,7 +6,7 @@ import numpy as np
 import json
 import requests
 class MyNewModule:
-    def __init__(self, parent):  # функция с названиями, инициалами и тд
+    def __init__(self, parent): 
         parent.title = "MLMedicine Module"
         parent.categories = ["SAMSegment"]
         parent.dependencies = []
@@ -29,8 +29,8 @@ class MyNewModuleWidget:
             self.parent.show()
 
     def setup(self):
-        collapsibleButton = ctk.ctkCollapsibleButton() #кнопка меню
-        collapsibleButton.text = "MyCollapsibleMenu" #название кнопки
+        collapsibleButton = ctk.ctkCollapsibleButton()
+        collapsibleButton.text = "MyCollapsibleMenu" 
 
         self.layout.addWidget(collapsibleButton)
         self.formLayout = qt.QFormLayout(collapsibleButton)
@@ -38,15 +38,6 @@ class MyNewModuleWidget:
         self.formFrame.setLayout(qt.QHBoxLayout())
         self.formLayout.addRow(self.formFrame)
 
-        #self.inputSelectorLabel = qt.QLabel("Input Volume:", self.formFrame)
-        #self.formFrame.layout().addWidget(self.inputSelectorLabel)
-
-        # self.inputSelector = slicer.qMRMLNodeComboBox(self.formFrame)
-        # self.inputSelector.nodeTypes = ["vtkMRMLScalarVolumeNode", "vtkMRMLVectorVolumeNode"]
-        # self.inputSelector.addEnabled = False
-        # self.inputSelector.removeEnabled = False
-        # self.inputSelector.setMRMLScene(slicer.mrmlScene)
-        # self.formFrame.layout().addWidget(self.inputSelector)
         button4 = qt.QPushButton("Slice")
         button4.connect("clicked(bool)", self.current_slice)
         self.formFrame.layout().addWidget(button4)
@@ -57,13 +48,7 @@ class MyNewModuleWidget:
 
         button1 = qt.QPushButton("ROI")
         button1.connect("clicked(bool)", self.ras_to_ijk_roi)
-        self.formFrame.layout().addWidget(button1)
-
-        button22 = qt.QPushButton("ROI2")
-        button22.connect("clicked(bool)", self.get_sam_roi_coordinates)
-        self.formFrame.layout().addWidget(button22)
-        
-        
+        self.formFrame.layout().addWidget(button1)        
 
         button6 = qt.QPushButton("Mask")
         button6.connect("clicked(bool)", self.creating_mask)
@@ -75,7 +60,6 @@ class MyNewModuleWidget:
 
         checkbox1 = qt.QCheckBox("Positive")
         self.formFrame.layout().addWidget(checkbox1)
-        # Присваиваем функцию обработчика события
         checkbox1.stateChanged.connect(self.checkbox1_red)
 
     def input_label(self):
@@ -98,14 +82,14 @@ class MyNewModuleWidget:
         print(redLogic.GetSliceOffset())
 
 
-    def get_many_coords(self): #пустой если обернуть в list()
-        fiducial_nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLMarkupsFiducialNode")  # список всех узлов, которые точки
-        coordinates = []  # полготавливаем список для его координат
-        for node in fiducial_nodes:  # итерируемся по каждому узлу
-            fiducial_name = node.GetName() #получаем имя узла
-            for i in range(node.GetNumberOfControlPoints()):   #каждая точка из списка
-                control_point = node.GetNthControlPointPositionWorld(i)  #получаем координаты
-                coordinates.append(control_point) #добавляем координаты
+    def get_many_coords(self): 
+        fiducial_nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLMarkupsFiducialNode") 
+        coordinates = [] 
+        for node in fiducial_nodes:
+            fiducial_name = node.GetName()
+            for i in range(node.GetNumberOfControlPoints()):   
+                control_point = node.GetNthControlPointPositionWorld(i)
+                coordinates.append(control_point) 
 
 
         print("Coordinates:")
@@ -152,43 +136,8 @@ class MyNewModuleWidget:
         return ras_roi_all, sizes
 
 
-    def get_sam_roi_coordinates(self):
-        volumeNode = slicer.util.getNode('vtkMRMLScalarVolumeNode*')
-        if not volumeNode:
-            raise ValueError("Volume node not найден")
-
-        roiNode = slicer.util.getNode('vtkMRMLMarkupsROINode*')
-        if not roiNode:
-            raise ValueError("ROI не найден")
-
-        centerRAS = np.array(roiNode.GetCenter())
-        sizeRAS = np.array(roiNode.GetSize())  # [x, y, z]
-
-        minRAS = centerRAS - sizeRAS / 2
-        maxRAS = centerRAS + sizeRAS / 2
-
-        rasToIjkMatrix = vtk.vtkMatrix4x4()
-        volumeNode.GetRASToIJKMatrix(rasToIjkMatrix)
-
-        def ras_to_ijk(ras_coords):
-            ras_coords_hom = list(ras_coords) + [1.0]
-            ijk_coords = [0.0, 0.0, 0.0, 0.0]
-            rasToIjkMatrix.MultiplyPoint(ras_coords_hom, ijk_coords)
-            return [int(round(c)) for c in ijk_coords[:3]]
-
-        minIJK = ras_to_ijk(minRAS)
-        maxIJK = ras_to_ijk(maxRAS)
-
-        x1, y1 = min(minIJK[0], maxIJK[0]), min(minIJK[1], maxIJK[1])
-        x2, y2 = max(minIJK[0], maxIJK[0]), max(minIJK[1], maxIJK[1])
-
-        sam_roi = [x1, y1, x2, y2]
-        print("SAM ROI координаты:", sam_roi)
-        return sam_roi
-
-
     def pixelArray(self):
-        mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode") #если пустой то = None
+        mainvolume = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode") 
         pixel_array = slicer.util.arrayFromVolume(mainvolume) #получили pixel_array изображения
         print(pixel_array.shape)
         return pixel_array
@@ -308,15 +257,6 @@ class MyNewModuleWidget:
             'input_label': input_label
         }
 
-
-
-        print(f"pixel_arr: {data['pixel_arr']}")
-        print(f"pixel_arr {len(data['pixel_arr'])}")
-        print(f"pixel_arr {type(data['pixel_arr'])}")
-        print(f'Внутренность JSON: {data["roi"]}, {data["points"]}, {data["input_label"]}')
-        print(len(data))
-
-        #print(type(points_serializable), type(roi), type(pixel_arr_serializable))
         username = "root"
         password = "1111"
         headers = {'Content-Type': 'application/json'}
@@ -325,7 +265,6 @@ class MyNewModuleWidget:
         if response.status_code == 200:
             print("File sent successfully to the server.")
             data_mask = response.content.decode()
-            #print(data_mask)
             return data_mask
         else:
             print(f"Failed to send file. Response status code: {response.status_code}")
