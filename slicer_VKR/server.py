@@ -1,8 +1,5 @@
 from dotenv import load_dotenv
 import os
-
-load_dotenv()
-
 import numpy as np
 import logging
 from inference_utils import SegmentAnythingONNX
@@ -10,9 +7,31 @@ from sklearn.preprocessing import MinMaxScaler
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import JSONResponse
-from models import MaskRequest, MaskResponse
+from pydantic import BaseModel
+from typing import List, Optional
 from contextlib import asynccontextmanager
 
+load_dotenv()
+
+# Модели для работы с разными слоями
+class SliceData:
+    def __init__(self):
+        self.embeddings = {}  # {slice_index: embedding}
+        self.masks = {}       # {slice_index: mask}
+
+# Модели Pydantic
+class MaskRequest(BaseModel):
+    slice_index: int
+    points: List[List[float]] = []
+    roi: List[List[float]] = []
+    pixel_arr: List[List[float]]
+    input_label: List[int] = []
+
+class MaskResponse(BaseModel):
+    slice_index: int
+    mask_fiducials: List[List[int]]
+
+# Конфигурация
 ENCODER_MODEL_PATH = os.getenv("ENCODER_MODEL_PATH")
 DECODER_MODEL_PATH = os.getenv("DECODER_MODEL_PATH")
 USERNAME = os.getenv("USERNAME")
@@ -29,12 +48,13 @@ async def lifespan(app: FastAPI):
             decoder_model_path=DECODER_MODEL_PATH,
         )
         app.state.model = model
+        app.state.slice_data = SliceData()  # Хранилище данных по слоям
         yield
     except Exception as e:
         logging.error(f"Ошибка инициализации модели: {e}")
         raise HTTPException(status_code=500, detail="Ошибка инициализации модели SAM")
     finally:
-        del app.state.model
+        del app.state.model, app.state.slice_data
         logging.info("Модель SAM выгружена из памяти")
 
 app = FastAPI(lifespan=lifespan)
@@ -49,97 +69,111 @@ async def verify_credentials(credentials: HTTPBasicCredentials = Depends(securit
         )
     return credentials
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc: HTTPException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": exc.detail},
-    )
-
-@app.exception_handler(Exception)
-async def general_exception_handler(request, exc: Exception):
-    logging.error(f"Internal Server Error: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal Server Error"},
-    )
-
-
 @app.post("/masks", response_model=MaskResponse)
 async def generate_masks(mask: MaskRequest):
     try:
-        points = np.array(mask.points)
-        roi = np.array(mask.roi)
-        pixel_arr = np.array(mask.pixel_arr)
-        input_label = np.array(mask.input_label)
-    except ValueError as e:
+        # Преобразование входных данных
+        points = np.array(mask.points, dtype=np.float32)
+        roi = np.array(mask.roi, dtype=np.float32)
+        pixel_arr = np.array(mask.pixel_arr, dtype=np.float32)
+        input_label = np.array(mask.input_label, dtype=np.int32)
+        slice_index = mask.slice_index
+    except Exception as e:
         raise HTTPException(status_code=422, detail=f"Ошибка обработки входных данных: {e}")
-    logging.info("Обработка входных данных JSON")
-    
+
+    # Нормализация изображения
     try:
         normalized_rgb_image = await normalize_pixel_array(pixel_arr)
-        np.set_printoptions(threshold=np.inf)
-        
-        # logging.info(f"IMAGE: {normalized_rgb_image}")
-        # logging.info(f"IMAGE: {type(normalized_rgb_image)}")
-        # logging.info(f"IMAGE: {normalized_rgb_image.shape}")
-    except HTTPException as e:
-        raise e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     model = app.state.model
+    slice_data = app.state.slice_data
 
-    try:
-        embedding = model.encode(normalized_rgb_image)
-    except Exception as e:
-        logging.error(f"Ошибка кодирования изображения: {e}")
-        raise HTTPException(status_code=500, detail="Ошибка кодирования изображения")
+    # Кэшируем эмбеддинги для каждого слоя
+    if slice_index not in slice_data.embeddings:
+        try:
+            embedding = model.encode(normalized_rgb_image)
+            slice_data.embeddings[slice_index] = embedding
+        except Exception as e:
+            logging.error(f"Ошибка кодирования изображения: {e}")
+            raise HTTPException(status_code=500, detail="Ошибка кодирования изображения")
 
+    # Генерация масок
     try:
-        masks = await mask_array_all(points=points, roi=roi, input_label=input_label, embedding=embedding, model=model)
+        masks = await mask_array_all(
+            points=points,
+            roi=roi,
+            input_label=input_label,
+            embedding=slice_data.embeddings[slice_index],
+            model=model
+        )
+        slice_data.masks[slice_index] = masks  # Сохраняем маску для слоя
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка генерации масок: {e}")
 
-    return MaskResponse(mask_fiducials=masks.tolist())
+    return MaskResponse(
+        slice_index=slice_index,
+        mask_fiducials=masks.astype(int).tolist()
+    )
 
-
-async def normalize_pixel_array(pixel_array):
-
-    scaler = MinMaxScaler()
-    reshaped_pixel_array = pixel_array.reshape(-1, 1)
-    normalized_pixel_array = scaler.fit_transform(reshaped_pixel_array)
-    normalized_pixel_array = normalized_pixel_array.reshape(pixel_array.shape)
-
-    R_channel = normalized_pixel_array  
-    G_channel = normalized_pixel_array  
-    B_channel = normalized_pixel_array  
-
-    rgb_image = np.stack([R_channel, G_channel, B_channel], axis=-1)
-
-    rgb_image = (rgb_image * 255).astype(np.uint8)
-    return rgb_image
-
-async def mask_array_all(points: np.ndarray, roi: np.ndarray, input_label: np.ndarray, embedding, model):
-    logging.info("Генерация масок")
-
-    print(roi)
-    print(points)
-    prompt = []
+async def normalize_pixel_array(pixel_array: np.ndarray) -> np.ndarray:
+    """Нормализация изображения и преобразование в RGB"""
+    if pixel_array.size == 0:
+        raise ValueError("Пустой массив пикселей")
     
-    if roi.size > 0:
-        prompt = [{"type": "rectangle", "data": roi[0]}]
-    elif points.size > 0:
-        prompt = [{"type":"point", "data":points[0], "label":input_label[0]}]
-    logging.info(f"Prompt: {prompt}")
     try:
-        masks = model.predict_masks(embedding, prompt)
-        np.save("mask.npy", masks)
+        # Нормализация к [0, 1]
+        p_min, p_max = pixel_array.min(), pixel_array.max()
+        if p_max - p_min > 0:
+            normalized = (pixel_array - p_min) / (p_max - p_min)
+        else:
+            normalized = np.zeros_like(pixel_array)
+        
+        # Преобразование в RGB (3 канала)
+        return np.stack([normalized]*3, axis=-1).astype(np.float32)
     except Exception as e:
-        logging.info(f"Error:{e}")
-    mask_fiducials = (masks > 0.5).astype(np.uint8)
+        raise ValueError(f"Ошибка нормализации: {str(e)}")
 
+async def mask_array_all(
+    points: np.ndarray,
+    roi: np.ndarray,
+    input_label: np.ndarray,
+    embedding: np.ndarray,
+    model: SegmentAnythingONNX
+) -> np.ndarray:
+    """Генерация масок по точкам и ROI"""
+    prompts = []
+    
+    # Обработка ROI (прямоугольники)
+    if roi.size > 0:
+        if roi.ndim == 2 and roi.shape[1] == 4:
+            for rect in roi:
+                prompts.append({
+                    "type": "rectangle",
+                    "data": rect.tolist()
+                })
+        else:
+            logging.warning(f"Некорректная форма ROI: {roi.shape}")
 
-    return mask_fiducials
+    # Обработка точек
+    if points.size > 0:
+        if points.ndim == 2 and points.shape[1] == 2:
+            for point, label in zip(points, input_label):
+                prompts.append({
+                    "type": "point",
+                    "data": point.tolist(),
+                    "label": int(label)
+                })
+        else:
+            logging.warning(f"Некорректная форма точек: {points.shape}")
 
+    if not prompts:
+        raise ValueError("Не заданы корректные точки или ROI")
 
-
-
+    try:
+        masks = model.predict_masks(embedding, prompts)
+        return (masks > 0.5).astype(np.uint8)[0, 0]  # Берем первую маску
+    except Exception as e:
+        logging.error(f"Ошибка предсказания: {str(e)}")
+        raise
