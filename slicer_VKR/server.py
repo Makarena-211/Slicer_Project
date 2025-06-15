@@ -4,6 +4,7 @@ import os
 load_dotenv()
 
 import numpy as np
+import uvicorn
 import logging
 from inference_utils import SegmentAnythingONNX
 from sklearn.preprocessing import MinMaxScaler
@@ -140,6 +141,13 @@ async def mask_array_all(points: np.ndarray, roi: np.ndarray, input_label: np.nd
 
     return mask_fiducials
 
+if __name__ == "__main__":
+    uvicorn.run(
+        "server:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )
 
 
 
