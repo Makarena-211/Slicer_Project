@@ -3,4 +3,4 @@ https://disk.yandex.ru/i/ufdxe7mLXAUAcQ
 
 ________________________________________
 ## Логи сервера во время демо:
-![](image.png)
+![logs](image.png)
